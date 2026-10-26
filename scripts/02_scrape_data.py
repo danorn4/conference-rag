@@ -26,8 +26,8 @@ from tqdm import tqdm
 
 
 YEARS_TO_SCRAPE = 5
-START_YEAR = 2025 - YEARS_TO_SCRAPE
-END_YEAR = 2025
+START_YEAR = 2026 - YEARS_TO_SCRAPE
+END_YEAR = 2026
 OUTPUT_DIR = os.path.join('scripts', 'output')
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'talks.json')
 
