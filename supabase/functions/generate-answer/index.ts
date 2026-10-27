@@ -20,7 +20,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  if (req.method !== "POST") {
+  if (req.method !== "GET" && req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
@@ -28,6 +28,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Deployment uses --no-verify-jwt, so validate the caller's session here.
     const authResult = await requireAuth(req);
     if ("error" in authResult) return authResult.error;
+
+    // The frontend uses GET as a cheap readiness probe. It verifies deployment,
+    // authentication, and secret configuration without making a billable AI call.
+    if (req.method === "GET") {
+      if (!Deno.env.get("OPENAI_API_KEY")) {
+        return jsonResponse({ ready: false, error: "OPENAI_API_KEY not configured" }, 503);
+      }
+      return jsonResponse({ ready: true });
+    }
 
     let body: unknown;
     try {

@@ -356,9 +356,9 @@ async function checkSearchReadiness() {
         } else {
             try {
                 const { data, error: fnError } = await supabaseClient.functions.invoke('generate-answer', {
-                    body: { question: 'test', context_talks: [] }
+                    method: 'GET'
                 });
-                setSearchReady('rag', !fnError || fnError.context?.status !== 404);
+                setSearchReady('rag', !fnError && data?.ready === true);
             } catch {
                 setSearchReady('rag', false);
             }
@@ -583,15 +583,53 @@ async function askQuestion() {
 // SHARED SEARCH UTILITIES
 // ============================================
 
-// Get embedding via Edge Function
+// Cache recent question embeddings in memory for this page session.
+// Map preserves insertion order, which lets us evict the oldest entry when full.
+const EMBEDDING_CACHE_MAX_ENTRIES = 50;
+const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000;
+const embeddingCache = new Map();
+
+// Get an embedding via the Edge Function, reusing a recent result when possible.
 async function getEmbedding(text) {
+    // Normalize harmless whitespace differences, but keep case and punctuation
+    // because they are part of the text sent to the embedding model.
+    const normalizedText = text.trim().replace(/\s+/g, ' ');
+    const cacheKey = `text-embedding-3-small:v1:${normalizedText}`;
+    const cached = embeddingCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > Date.now()) {
+        // Refresh insertion order so recently used entries stay in the cache.
+        embeddingCache.delete(cacheKey);
+        embeddingCache.set(cacheKey, cached);
+        console.info('Embedding cache hit');
+        return cached.embedding;
+    }
+
+    if (cached) embeddingCache.delete(cacheKey);
+    console.info('Embedding cache miss; requesting a new embedding');
+
     const { data, error } = await supabaseClient.functions.invoke('embed-question', {
-        body: { question: text }
+        body: { question: normalizedText }
     });
 
     if (error) {
         throw new Error(data?.error || 'Failed to get embedding');
     }
+
+    if (!Array.isArray(data?.embedding)) {
+        throw new Error('Embedding function returned an invalid embedding');
+    }
+
+    // Remove the least recently used item before adding a new one at capacity.
+    if (embeddingCache.size >= EMBEDDING_CACHE_MAX_ENTRIES) {
+        const oldestKey = embeddingCache.keys().next().value;
+        if (oldestKey !== undefined) embeddingCache.delete(oldestKey);
+    }
+
+    embeddingCache.set(cacheKey, {
+        embedding: data.embedding,
+        expiresAt: Date.now() + EMBEDDING_CACHE_TTL_MS
+    });
 
     return data.embedding;
 }
